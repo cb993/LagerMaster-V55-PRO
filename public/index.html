@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LagerMaster V55 PRO</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+    <style>
+        body { background: #f5f7fa; font-family: sans-serif; }
+        .hidden { display: none !important; }
+        #reader-container { background: #000; border-radius: 12px; overflow: hidden; margin-bottom: 15px; position: relative; }
+        #modal-timer-bar { height: 6px; background: #3273dc; width: 100%; position: absolute; bottom: 0; left: 0; transition: width 0.1s linear; }
+        .status-red { background: #ff3860 !important; color: white !important; font-weight: bold; text-align: center; border-radius: 4px; }
+        .status-orange { background: #ffdd57 !important; color: #4a4a4a !important; font-weight: bold; text-align: center; border-radius: 4px; }
+        .status-green { background: #48c78e !important; color: white !important; font-weight: bold; text-align: center; border-radius: 4px; }
+        .read-only { background: #f9f9f9 !important; pointer-events: none; color: #7a7a7a !important; }
+        .vendor-row { background: #f0f0f0; border-radius: 6px; margin-bottom: 5px; padding: 4px; }
+        .inv-done { border-left: 8px solid #48c78e !important; background-color: #effaf3 !important; }
+    </style>
+</head>
+<body>
+    <div class="container p-2">
+        <div class="is-flex is-justify-content-between is-align-items-center mb-3">
+            <h1 class="title is-5 m-0">📦 LagerMaster V55</h1>
+            <div>
+                <button class="button is-small is-info is-light" onclick="openHelp()">ℹ️ Hilfe</button>
+                <button class="button is-small is-link is-outlined" onclick="toggleView()">⚙️ Admin</button>
+            </div>
+        </div>
+        <div id="view-main">
+            <div id="reader-container" class="hidden"><div id="reader"></div><button class="button is-danger is-fullwidth" onclick="stopCam()">Abbrechen</button></div>
+            <div id="inv-banner" class="notification is-warning is-light p-2 mb-3 has-text-centered hidden"><p class="is-size-7"><strong>⚠️ INVENTUR AKTIV</strong></p></div>
+            <div class="box p-3 mb-3">
+                <button class="button is-info is-fullwidth is-medium mb-3" onclick="startCam()"><span>📷 SCAN STARTEN</span></button>
+                <div class="field has-addons">
+                    <div class="control is-expanded"><input id="search" class="input is-small" placeholder="Suchen..." oninput="render()"></div>
+                    <div class="control"><button class="button is-primary is-small" onclick="openModal(null, true)">➕ Neu</button></div>
+                </div>
+            </div>
+            <table class="table is-fullwidth is-narrow is-size-7">
+                <thead><tr><th>Artikel / Platz</th><th style="width:70px">Menge</th><th></th></tr></thead>
+                <tbody id="inventory-body"></tbody>
+            </table>
+        </div>
+        <div id="view-admin" class="hidden">
+            <div class="box p-3">
+                <button id="inv-mode-btn" class="button is-warning is-fullwidth mb-3" onclick="toggleInv()">📝 Inventur starten</button>
+                <button class="button is-info is-light is-fullwidth is-small" onclick="exportCSV()">📊 CSV Export</button>
+            </div>
+            <button class="button is-fullwidth is-light" onclick="toggleView()">Zurück</button>
+        </div>
+    </div>
+
+    <div id="help-modal" class="modal">
+        <div class="modal-background" onclick="closeHelp()"></div>
+        <div class="modal-card"><section class="modal-card-body content is-size-7">
+            <h3 class="title is-6">Kurzanleitung</h3>
+            <p><strong>Scan:</strong> USB-Scanner (Hintergrund) oder Kamera.<br><strong>Entnahme:</strong> Grüner Button (10s aktiv) nach Scan.<br><strong>Löschen:</strong> Im Bearbeiten-Modus (✎) unten. Doppelte Abfrage!</p>
+            <button class="button is-info is-fullwidth" onclick="closeHelp()">OK</button>
+        </section></div>
+    </div>
+
+    <div id="edit-modal" class="modal">
+        <div class="modal-background" onclick="closeModal()"></div>
+        <div class="modal-card" style="max-width:95%">
+            <header class="modal-card-head py-2"><p class="modal-card-title is-size-7" id="m-title"></p></header>
+            <section class="modal-card-body">
+                <div id="quick-confirm" class="notification is-success is-light p-2 mb-2 hidden"><button class="button is-success is-fullwidth" onclick="takeOne()"><strong>✅ ENTNEHMEN (-1)</strong></button></div>
+                <div class="field"><label class="label is-size-7 mb-0">Bezeichnung</label><input id="f-name" class="input is-small"></div>
+                <div class="field"><label class="label is-size-7 mb-0">Barcode</label><input id="f-bc" class="input is-small"></div>
+                <div class="columns is-mobile mb-0">
+                    <div class="column"><label class="label is-size-7 mb-0">Platz</label><div class="is-flex"><input id="f-loc" class="input is-small mr-1"><input id="f-pos" class="input is-small"></div></div>
+                    <div class="column"><label class="label is-size-7 mb-0">Menge / Min</label><div class="is-flex"><input id="f-qty" class="input is-small mr-1" type="number"><input id="f-min" class="input is-small" type="number"></div></div>
+                </div>
+                <div id="v-list" class="mt-2"></div>
+                <button id="m-add-v" class="button is-small is-fullwidth is-ghost" onclick="addVRow()">+ Lieferant</button>
+                <hr class="my-2">
+                <button id="del-btn" class="button is-danger is-light is-fullwidth is-small hidden" onclick="deleteItem()">🗑️ Artikel löschen</button>
+            </section>
+            <footer class="modal-card-foot py-2" id="m-foot"><button class="button is-success is-small is-fullwidth" onclick="save()">💾 Speichern</button></footer>
+            <div id="modal-timer-bar"></div>
+        </div>
+    </div>
+
+    <div id="inv-modal" class="modal"><div class="modal-background"></div><div class="modal-card" style="max-width:85%"><section class="modal-card-body">
+        <p id="inv-item-name" class="has-text-weight-bold mb-2"></p>
+        <input id="inv-qty-input" class="input is-large" type="number">
+        <button class="button is-success is-fullwidth is-large mt-3" onclick="saveInv()">OK</button>
+    </section></div></div>
+
+    <script>
+        let inv = [], scanner = null, bcBuf = "", lastBC = "", timer = null, isS = false, invA = false, checked = new Set();
+        window.onkeydown = (e) => {
+            if (e.target.tagName === "INPUT") return;
+            if (e.key === "Enter") { if (bcBuf.length > 2) { isS = true; handleScan(bcBuf); } bcBuf = ""; }
+            else if (e.key.length === 1) bcBuf += e.key;
+        };
+        async function load() { const r = await fetch('/api/list'); inv = await r.json(); render(); }
+        function handleScan(bc) {
+            lastBC = bc; const i = inv.find(x => x.bc === bc);
+            if (invA && i) {
+                document.getElementById('inv-item-name').innerText = i.name;
+                document.getElementById('inv-qty-input').value = i.q;
+                document.getElementById('inv-modal').classList.add('is-active');
+                setTimeout(() => document.getElementById('inv-qty-input').select(), 100);
+                return;
+            }
+            if(i) openModal(i.name, false); else { openModal(null, true); document.getElementById('f-bc').value = bc; }
+        }
+        function toggleInv() {
+            invA = !invA; 
+            const btn = document.getElementById('inv-mode-btn');
+            btn.innerText = invA ? "⏹️ Stoppen" : "📝 Inventur starten";
+            btn.classList.toggle('is-danger', invA);
+            document.getElementById('inv-banner').classList.toggle('hidden', !invA);
+            render();
+        }
+        function openModal(n, edit) {
+            if(timer) clearInterval(timer);
+            const i = n ? inv.find(x=>x.name===n) : {name:'',bc:'',q:0,min:0,loc:'',pos:'',vendors:[]};
+            if(!edit && !invA && isS) { document.getElementById('quick-confirm').classList.remove('hidden'); startT(10); } 
+            else { document.getElementById('quick-confirm').classList.add('hidden'); }
+            document.getElementById('m-title').innerText = edit ? "Bearbeiten" : "Info";
+            ['f-name','f-bc','f-loc','f-pos','f-qty','f-min'].forEach(f => {
+                const el = document.getElementById(f); el.value = i[f.split('-')[1]]||'';
+                el.readOnly = !edit; el.className = edit ? "input is-small" : "input is-small read-only";
+            });
+            document.getElementById('v-list').innerHTML = '';
+            if(i.vendors) i.vendors.forEach(v => addVRow(v.name, v.price, edit));
+            document.getElementById('del-btn').classList.toggle('hidden', !edit || !n);
+            document.getElementById('m-foot').classList.toggle('hidden', !edit);
+            document.getElementById('edit-modal').classList.add('is-active');
+        }
+        function addVRow(n='', p='', edit=true) {
+            const d = document.createElement('div'); d.className = 'columns is-mobile vendor-row m-0';
+            d.innerHTML = `<div class="column p-1"><input class="input is-small ${!edit?'read-only':''}" value="${n}" placeholder="Händler"></div>
+                            <div class="column is-4 p-1"><input class="input is-small ${!edit?'read-only':''}" value="${p}" placeholder="€"></div>`;
+            document.getElementById('v-list').appendChild(d);
+        }
+        async function deleteItem() {
+            if (confirm("Löschen?") && confirm("Sicher?")) {
+                await fetch('/api/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name: document.getElementById('f-name').value})});
+                closeModal(); load();
+            }
+        }
+        async function save() {
+            const vs = []; document.querySelectorAll('.vendor-row').forEach(r => {
+                const ins = r.querySelectorAll('input'); if(ins[0].value) vs.push({name: ins[0].value, price: ins[1].value});
+            });
+            const i = { name: document.getElementById('f-name').value, bc: document.getElementById('f-bc').value, q: document.getElementById('f-qty').value, min: document.getElementById('f-min').value, loc: document.getElementById('f-loc').value, pos: document.getElementById('f-pos').value, vendors: vs };
+            await fetch('/api/save', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(i)}); closeModal(); load();
+        }
+        async function saveInv() {
+            const i = inv.find(x => x.bc === lastBC); i.q = document.getElementById('inv-qty-input').value;
+            await fetch('/api/save', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(i)});
+            checked.add(lastBC); document.getElementById('inv-modal').classList.remove('is-active'); load();
+        }
+        async function takeOne() {
+            const i = inv.find(x => x.bc === lastBC);
+            if(i) { i.q = Math.max(0, parseFloat(i.q) - 1); await fetch('/api/save', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(i)}); closeModal(); load(); }
+        }
+        function startT(s) { let t = 100; timer = setInterval(() => { t -= 1; document.getElementById('modal-timer-bar').style.width = t + '%'; if(t <= 0) closeModal(); }, s * 10); }
+        function startCam() { document.getElementById('reader-container').classList.remove('hidden'); scanner = new Html5Qrcode("reader"); scanner.start({ facingMode: "environment" }, { fps: 20, qrbox: 250 }, (txt) => { isS = true; handleScan(txt); stopCam(); }); }
+        function stopCam() { if(scanner) scanner.stop(); document.getElementById('reader-container').classList.add('hidden'); }
+        function closeModal() { if(timer) clearInterval(timer); document.getElementById('edit-modal').classList.remove('is-active'); isS = false; }
+        function openHelp() { document.getElementById('help-modal').classList.add('is-active'); }
+        function closeHelp() { document.getElementById('help-modal').classList.remove('is-active'); }
+        function toggleView() { document.getElementById('view-admin').classList.toggle('hidden'); document.getElementById('view-main').classList.toggle('hidden'); }
+        function render() {
+            const q = document.getElementById('search').value.toLowerCase();
+            document.getElementById('inventory-body').innerHTML = inv.filter(i => i.name.toLowerCase().includes(q) || (i.bc && i.bc.includes(q)))
+                .map(i => {
+                    let v=parseFloat(i.q)||0, m=parseFloat(i.min)||0, c=v===0?"status-red":(v<=m?"status-orange":"status-green"), ind=invA&&checked.has(i.bc)?"✅ ":"";
+                    return `<tr class="${invA&&checked.has(i.bc)?'inv-done':''}"><td><strong onclick="openModal('${i.name}',false)">${ind}${i.name}</strong></td><td class="${c}">${v}</td><td><button class="button is-small is-white" onclick="openModal('${i.name}',true)">✎</button></td></tr>`;
+                }).join('');
+        }
+        function exportCSV() { let c = "Name;BC;Menge\n"; inv.forEach(i => c += `${i.name};${i.bc};${i.q}\n`); window.open(URL.createObjectURL(new Blob([c], {type:'text/csv'}))); }
+        load();
+    </script>
+</body>
+</html>
